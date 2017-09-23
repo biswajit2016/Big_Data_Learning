@@ -1,0 +1,862 @@
+//Initializing Spark in Scala//*
+
+import org.apache.spark.SparkConf
+import org.apache.spark.SparkContext
+import org.apache.spark.SparkContext._
+
+val conf = new SparkConf().setMaster("local").setAppName("My App")
+val sc = new SparkContext(conf)
+
+---------------------------------------
+// WORD COUNT IN SCALA//*
+
+// Create a Scala Spark Context.
+val conf = new SparkConf().setAppName("wordCount")
+val sc = new SparkContext(conf)
+// Load our input data.
+val input =  sc.textFile(inputFile)
+// Split it up into words.
+val words = input.flatMap(line => line.split(" "))
+// Transform into pairs and count.
+val counts = words.map(word => (word, 1)).reduceByKey{case (x, y) => x + y}
+// Save the word count back out to a text file, causing evaluation.
+counts.saveAsTextFile(outputFile)
+
+------------------------------------------------
+//SBT build file
+name := "learning-spark-mini-example"
+
+version := "0.0.1"
+
+scalaVersion := "2.10.4"
+
+// additional libraries
+libraryDependencies ++= Seq(
+  "org.apache.spark" %% "spark-core" % "1.2.0" % "provided"
+)
+
+----------------------------------------------
+//SCALA BUILD AND RUN
+
+sbt clean package
+$SPARK_HOME/bin/spark-submit \
+  --class com.oreilly.learningsparkexamples.mini.scala.WordCount \
+  ./target/...(as above) \
+  ./README.md ./wordcounts
+-------------------------------------
+
+//parallelize() method in Scala
+
+val lines = sc.parallelize(List("pandas", "i like pandas"))
+
+//filter() transformation in Scala
+val inputRDD = sc.textFile("log.txt")
+val errorsRDD = inputRDD.filter(line => line.contains("error"))
+
+//union() transformation in Scala
+val errorsRDD = inputRDD.filter(x => x.contains"error")
+val warningsRDD = inputRDD.filter(x => x.contains "warning" in x)
+val badLinesRDD = errorsRDD.union(warningsRDD)
+
+//Scala error count using actions
+println "Input had " + badLinesRDD.count() + " concerning lines"
+println "Here are 10 examples:"
+for line in badLinesRDD.take(10):
+    print line
+
+
+//Scala function passing
+class SearchFunctions(val query: String) {
+  def isMatch(s: String): Boolean = {
+    s.contains(query)
+  }
+  def getMatchesFunctionReference(rdd: RDD[String]): RDD[String] = {
+    // Problem: "isMatch" means "this.isMatch", so we pass all of "this"
+    rdd.map(isMatch)
+  }
+  def getMatchesFieldReference(rdd: RDD[String]): RDD[String] = {
+    // Problem: "query" means "this.query", so we pass all of "this"
+    rdd.map(x => x.split(query))
+  }
+  def getMatchesNoReference(rdd: RDD[String]): RDD[String] = {
+    // Safe: extract just the field we need into a local variable
+    val query_ = this.query
+    rdd.map(x => x.split(query_))
+  }
+}
+
+
+//Scala squaring the values in an RDD
+val input = sc.parallelize(List(1, 2, 3, 4))
+val result = input.map(x => x * x)
+println(result.collect().mkString(","))
+
+
+//flatMap() in Scala, splitting lines into multiple words
+val lines = sc.parallelize(List("hello world", "hi"))
+val words = lines.flatMap(line => line.split(" "))
+words.first()  // returns "hello"
+
+//aggregate() in Scala
+val result = input.aggregate((0, 0))(
+               (acc, value) => (acc._1 + value, acc._2 + 1),
+               (acc1, acc2) => (acc1._1 + acc2._1, acc1._2 + acc2._2))
+val avg = result._1 / result._2.toDouble
+
+//TIP -
+ ADD  import org.apache.spark.SparkContext._ : As mentioned in “Initializing a SparkContext”, we need to add import org.apache.spark.SparkContext._ for these conversions to work.
+
+//TIP-
+
+PYTHON
+The Python API is structured differently than Java and Scala. In Python all of the functions are implemented on the base RDD class but will fail at runtime if the type of data in the RDD is incorrect.
+
+// Persist() in Scala
+val result = input.map(x => x * x)
+result.persist(StorageLevel.DISK_ONLY)
+println(result.count())
+println(result.collect().mkString(","))
+
+//Creating a pair RDD using the first word as the key in Scala
+val pairs = lines.map(x => (x.split(" ")(0), x))
+
+// Simple filter on second element in Scala.. lines longer than 20 characters
+pairs.filter{case (key, value) => value.length < 20}
+
+//Per-key average with reduceByKey() and mapValues() in Scala
+rdd.mapValues(x => (x, 1)).reduceByKey((x, y) => (x._1 + y._1, x._2 + y._2))
+
+
+//Word count in Scala
+val input = sc.textFile("s3://...")
+val words = input.flatMap(x => x.split(" "))
+val result = words.map(x => (x, 1)).reduceByKey((x, y) => x + y)
+
+//TIP
+To understand combineByKey(), it’s useful to think of how it handles each element it processes. As combineByKey() goes through the elements in a partition, each element either has a key it hasn’t seen before or has the same key as a previous element.
+
+If it’s a new element, combineByKey() uses a function we provide, called createCombiner(), to create the initial value for the accumulator on that key. It’s important to note that this happens the first time a key is found in each partition, rather than only the first time the key is found in the RDD.
+
+If it is a value we have seen before while processing that partition, it will instead use the provided function, mergeValue(), with the current value for the accumulator for that key and the new value.
+
+Since each partition is processed independently, we can have multiple accumulators for the same key. When we are merging the results from each partition, if two or more partitions have an accumulator for the same key we merge the accumulators using the user-supplied mergeCombiners() function.
+
+// Per-key average using combineByKey() in Scala
+val result = input.combineByKey(
+  (v) => (v, 1),
+  (acc: (Int, Int), v) => (acc._1 + v, acc._2 + 1),
+  (acc1: (Int, Int), acc2: (Int, Int)) => (acc1._1 + acc2._1, acc1._2 + acc2._2)
+  )
+val avg = result.map{ case (key, value) => (key, value._1 / value._2.toFloat) }
+  result.collectAsMap().map(println(_))
+
+//reduceByKey() with custom parallelism in Scala
+val data = Seq(("a", 3), ("b", 4), ("a", 1))
+sc.parallelize(data).reduceByKey((x, y) => x + y)    // Default parallelism
+sc.parallelize(data).reduceByKey((x, y) => x + y,10)    // Custom parallelism
+
+//TIP
+Spark also has an optimized version of repartition() called coalesce() that allows avoiding data movement, but only if you are decreasing the number of RDD partitions. To know whether you can safely call coalesce(), you can check the size of the RDD using rdd.partitions.size() in Java/Scala and rdd.getNumPartitions() in Python and make sure that you are coalescing it to fewer partitions than it currently has.
+
+
+//Scala shell inner join
+storeAddress = {
+  (Store("Ritual"), "1026 Valencia St"), (Store("Philz"), "748 Van Ness Ave"),
+  (Store("Philz"), "3101 24th St"), (Store("Starbucks"), "Seattle")}
+
+storeRating = {
+  (Store("Ritual"), 4.9), (Store("Philz"), 4.8))}
+
+storeAddress.join(storeRating) == {
+  (Store("Ritual"), ("1026 Valencia St", 4.9)),
+  (Store("Philz"), ("748 Van Ness Ave", 4.8)),
+  (Store("Philz"), ("3101 24th St", 4.8))}
+
+//TIP
+Sometimes we don’t need the key to be present in both RDDs to want it in our result. For example, if we were joining customer information with recommendations we might not want to drop customers if there were not any recommendations yet. leftOuterJoin(other) and rightOuterJoin(other) both join pair RDDs together by key, where one of the pair RDDs can be missing the key.
+
+//Custom sort order in Scala, sorting integers as if strings
+val input: RDD[(Int, Venue)] = ...
+implicit val sortIntegersByString = new Ordering[Int] {
+  override def compare(a: Int, b: Int) = a.toString.compare(b.toString)
+}
+rdd.sortByKey()
+
+//TIP
+Partitioning will not be helpful in all applications—for example, if a given RDD is scanned only once, there is no point in partitioning it in advance. It is useful only when a dataset is reused multiple times in key-oriented operations such as joins. We will give some examples shortly.
+
+
+//TIP ON PARTITIONING
+you might choose to hash-partition an RDD into 100 partitions so that keys that have the same hash value modulo 100 appear on the same node. Or you might range-partition the RDD into sorted ranges of keys so that elements with keys in the same range appear on the same node.
+
+Scala simple application
+// Initialization code; we load the user info from a Hadoop SequenceFile on HDFS.
+// This distributes elements of userData by the HDFS block where they are found,
+// and doesn't provide Spark with any way of knowing in which partition a
+// particular UserID is located.
+val sc = new SparkContext(...)
+val userData = sc.sequenceFile[UserID, UserInfo]("hdfs://...").persist()
+
+//Scala simple application
+// Function called periodically to process a logfile of events in the past 5 minutes;
+// we assume that this is a SequenceFile containing (UserID, LinkInfo) pairs.
+def processNewLogs(logFileName: String) {
+  val events = sc.sequenceFile[UserID, LinkInfo](logFileName)
+  val joined = userData.join(events)// RDD of (UserID, (UserInfo, LinkInfo)) pairs
+  val offTopicVisits = joined.filter {
+    case (userId, (userInfo, linkInfo)) => // Expand the tuple into its components
+      !userInfo.topics.contains(linkInfo.topic)
+  }.count()
+  println("Number of visits to non-subscribed topics: " + offTopicVisits)
+}
+
+
+//Scala custom partitioner(add the lines to the val userdata RDD command )
+val sc = new SparkContext(...)
+val userData = sc.sequenceFile[UserID, UserInfo]("hdfs://...")
+                 .partitionBy(new HashPartitioner(100))   // Create 100 partitions
+                 .persist()
+
+/* PARTITION TIP */
+RDDs are called/imported/made from the transformations that originally created it. So when an RDD is partitioned and not persisted calling/running an action on that RDD will cause SPARK to again repartition it from the transformations that created it. But persisting it will store the RDD in memory invoking less network bandwith overheads and faster processing, less shuffling.
+
+//TIP
+sortByKey() and groupByKey() will result in range-partitioned and hash-partitioned RDDs, respectively. On the other hand, operations like map() cause the new RDD to forget the parent’s partitioning information, because such operations could theoretically modify the key of each record. The next few sections describe how to determine how an RDD is partitioned, and exactly how partitioning affects the various Spark operations.
+
+//PARTITIONING IN JAVA AND PYTHON
+Spark’s Java and Python APIs benefit from partitioning in the same way as the Scala API. However, in Python, you cannot pass a HashPartitioner object to partitionBy; instead, you just pass the number of partitions desired (e.g., rdd.partitionBy(100)).
+
+Determining partitioner of an RDD
+scala> val pairs = sc.parallelize(List((1, 1), (2, 2), (3, 3)))
+pairs: spark.RDD[(Int, Int)] = ParallelCollectionRDD[0] at parallelize at <console>:12
+
+scala> pairs.partitioner
+res0: Option[spark.Partitioner] = None
+
+scala> val partitioned = pairs.partitionBy(new spark.HashPartitioner(2))
+partitioned: spark.RDD[(Int, Int)] = ShuffledRDD[1] at partitionBy at <console>:14
+
+scala> partitioned.partitioner
+res1: Option[spark.Partitioner] = Some(spark.HashPartitioner@5147788d) 
+
+Operations That Benefit from Partitioning
+Many of Spark’s operations involve shuffling data by key across the network. All of these will benefit from partitioning. As of Spark 1.0, the operations that benefit from partitioning are cogroup(), groupWith(), join(), leftOuterJoin(), rightOuterJoin(), groupByKey(), reduceByKey(), combineByKey(), and lookup().
+
+//TIP
+All that said, here are all the operations that result in a partitioner being set on the output RDD: cogroup(), groupWith(), join(), leftOuterJoin(), rightOuterJoin(), groupByKey(), reduceByKey(), combineByKey(), partitionBy(), sort(), mapValues() (if the parent RDD has a partitioner), flatMapValues() (if parent has a partitioner), and filter() (if parent has a partitioner). All other operations will produce a result with no partitioner.
+
+Finally, for binary operations, which partitioner is set on the output depends on the parent RDDs’ partitioners. By default, it is a hash partitioner, with the number of partitions set to the level of parallelism of the operation. However, if one of the parents has a partitioner set, it will be that partitioner; and if both parents have a partitioner set, it will be the partitioner of the first parent.
+
+//Scala PageRank
+# Assume that our neighbor list was saved as a Spark objectFile
+val links = sc.objectFile[(String, Seq[String])]("links")
+              .partitionBy(new HashPartitioner(100))
+              .persist()
+
+# Initialize each page's rank to 1.0; since we use mapValues, the resulting RDD will have the same partitioner as links
+var ranks = links.mapValues(v => 1.0)
+
+// Run 10 iterations of PageRank
+for (i <- 0 until 10) {
+  val contributions = links.join(ranks).flatMap {
+    case (pageId, (links, rank)) =>
+      links.map(dest => (dest, rank / links.size))
+  }
+  ranks = contributions.reduceByKey((x, y) => x + y).mapValues(v => 0.15 + 0.85*v)
+}
+
+// Write out the final ranks
+ranks.saveAsTextFile("ranks")
+
+// Scala custom partitioner
+class DomainNamePartitioner(numParts: Int) extends Partitioner {
+  override def numPartitions: Int = numParts
+  override def getPartition(key: Any): Int = {
+    val domain = new Java.net.URL(key.toString).getHost()
+    val code = (domain.hashCode % numPartitions)
+    if (code < 0) {
+      code + numPartitions  // Make it non-negative
+    } else {
+      code
+    }
+  }
+  // Java equals method to let Spark compare our Partitioner objects
+  override def equals(other: Any): Boolean = other match {
+    case dnp: DomainNamePartitioner =>
+      dnp.numPartitions == numPartitions
+    case _ =>
+      false
+  }
+}
+
+// Loading a text file in Scala
+val input = sc.textFile("file:///home/holden/repos/spark/README.md")
+
+//Average value per file in Scala
+val input = sc.wholeTextFiles("file://home/holden/salesFiles")
+val result = input.mapValues{y => val nums = y.split(" ").map(x => x.toDouble)
+  nums.sum / nums.size.toDouble
+}
+
+// Loading JSON in Scala
+import com.fasterxml.jackson.module.scala.DefaultScalaModule
+import com.fasterxml.jackson.module.scala.experimental.ScalaObjectMapper
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.DeserializationFeature
+...
+case class Person(name: String, lovesPandas: Boolean)
+ // Must be a top-level class
+// Parse it into a specific case class. We use flatMap to handle errors
+// by returning an empty list (None) if we encounter an issue and a
+// list with one element if everything is ok (Some(_)).
+val result = input.flatMap(record => {
+  try {
+    Some(mapper.readValue(record, classOf[Person]))
+  } catch {
+    case e: Exception => None
+  }})
+
+// Saving JSON in Scala
+result.filter(p => P.lovesPandas).map(mapper.writeValueAsString(_))
+  .saveAsTextFile(outputFile)
+
+//Loading CSV with textFile() in Scala
+import Java.io.StringReader
+import au.com.bytecode.opencsv.CSVReader
+...
+val input = sc.textFile(inputFile)
+val result = input.map{ line =>
+  val reader = new CSVReader(new StringReader(line));
+  reader.readNext();
+}
+
+//Loading CSV in full in Scala
+case class Person(name: String, favoriteAnimal: String)
+
+val input = sc.wholeTextFiles(inputFile)
+val result = input.flatMap{ case (_, txt) =>
+  val reader = new CSVReader(new StringReader(txt));
+  reader.readAll().map(x => Person(x(0), x(1)))
+}
+
+//Writing CSV in Scala
+pandaLovers.map(person => List(person.name, person.favoriteAnimal).toArray)
+.mapPartitions{people =>
+  val stringWriter = new StringWriter();
+  val csvWriter = new CSVWriter(stringWriter);
+  csvWriter.writeAll(people.toList)
+  Iterator(stringWriter.toString)
+}.saveAsTextFile(outFile)
+
+//Loading a SequenceFile in Scala
+val data = sc.sequenceFile(inFile, classOf[Text], classOf[IntWritable]).
+  map{case (x, y) => (x.toString, y.get())}
+
+//Saving a SequenceFile in Scala
+val data = sc.parallelize(List(("Panda", 3), ("Kay", 6), ("Snail", 2)))
+data.saveAsSequenceFile(outputFile)
+
+//Loading KeyValueTextInputFormat() with old-style API in Scala
+val input = sc.hadoopFile[Text, Text, KeyValueTextInputFormat](inputFile).map{
+  case (x, y) => (x.toString, y.toString)
+}
+
+
+// Loading LZO-compressed JSON with Elephant Bird in Scala
+val input = sc.newAPIHadoopFile(inputFile, classOf[LzoJsonInputFormat],
+  classOf[LongWritable], classOf[MapWritable], conf)
+// Each MapWritable in "input" represents a JSON object
+
+
+Sample protocol buffer definition
+message Venue {
+  required int32 id = 1;
+  required string name = 2;
+  required VenueType type = 3;
+  optional string address = 4;
+
+  enum VenueType {
+    COFFEESHOP = 0;
+    WORKPLACE = 1;
+    CLUB = 2;
+    OMNOMNOM = 3;
+    OTHER = 4;
+  }
+}
+
+message VenueResponse {
+  repeated Venue results = 1;
+}
+
+//Elephant Bird protocol buffer writeout in Scala
+val job = new Job()
+val conf = job.getConfiguration
+LzoProtobufBlockOutputFormat.setClassConf(classOf[Places.Venue], conf);
+val dnaLounge = Places.Venue.newBuilder()
+dnaLounge.setId(1);
+dnaLounge.setName("DNA Lounge")
+dnaLounge.setType(Places.Venue.VenueType.CLUB)
+val data = sc.parallelize(List(dnaLounge.build()))
+val outputData = data.map{ pb =>
+  val protoWritable = ProtobufWritable.newInstance(classOf[Places.Venue]);
+  protoWritable.set(pb)
+  (null, protoWritable)
+}
+outputData.saveAsNewAPIHadoopFile(outputFile, classOf[Text],
+  classOf[ProtobufWritable[Places.Venue]],
+  classOf[LzoProtobufBlockOutputFormat[ProtobufWritable[Places.Venue]]], conf)
+
+//Loading a compressed text file from the local filesystem in Scala
+val rdd = sc.textFile("file:///home/holden/happypandas.gz")
+
+//Creating a HiveContext and selecting data in Scala
+import org.apache.spark.sql.hive.HiveContext
+
+val hiveCtx = new org.apache.spark.sql.hive.HiveContext(sc)
+val rows = hiveCtx.sql("SELECT name, age FROM users")
+val firstRow = rows.first()
+println(firstRow.getString(0)) // Field 0 is the name
+
+//Sample tweets in JSON
+{"user": {"name": "Holden", "location": "San Francisco"}, "text": "Nice day out today"}
+{"user": {"name": "Matei", "location": "Berkeley"}, "text": "Even nicer here :)"}
+
+//JSON loading with Spark SQL in Scala
+val tweets = hiveCtx.jsonFile("tweets.json")
+tweets.registerTempTable("tweets")
+val results = hiveCtx.sql("SELECT user.name, text FROM tweets")
+
+//JdbcRDD in Scala
+def createConnection() = {
+  Class.forName("com.mysql.jdbc.Driver").newInstance();
+  DriverManager.getConnection("jdbc:mysql://localhost/test?user=holden");
+}
+
+def extractValues(r: ResultSet) = {
+  (r.getInt(1), r.getString(2))
+}
+
+val data = new JdbcRDD(sc,
+  createConnection, "SELECT * FROM panda WHERE ? <= id AND id <= ?",
+  lowerBound = 1, upperBound = 3, numPartitions = 2, mapRow = extractValues)
+println(data.collect().toList)
+JdbcRDD takes several parameters:
+
+First, we provide a function to establish a connection to our database. This lets each node create its own connection to load data over, after performing any configuration required to connect.
+
+Next, we provide a query that can read a range of the data, as well as a lowerBound and upperBound value for the parameter to this query. These parameters allow Spark to query different ranges of the data on different machines, so we don’t get bottlenecked trying to load all the data on a single node.
+
+The last parameter is a function that converts each row of output from a java.sql.ResultSet to a format that is useful for manipulating our data. In Example 5-37, we will get (Int, String) pairs. If this parameter is left out, Spark will automatically convert each row to an array of objects.
+
+//sbt requirements for Cassandra connector
+"com.datastax.spark" %% "spark-cassandra-connector" % "1.0.0-rc5",
+"com.datastax.spark" %% "spark-cassandra-connector-java" % "1.0.0-rc5"
+
+//Setting the Cassandra property in Scala
+val conf = new SparkConf(true)
+        .set("spark.cassandra.connection.host", "hostname")
+
+val sc = new SparkContext(conf)
+
+//Loading the entire table as an RDD with key/value data in Scala
+// Implicits that add functions to the SparkContext & RDDs.
+import com.datastax.spark.connector._
+
+// Read entire table as an RDD. Assumes your table test was created as
+// CREATE TABLE test.kv(key text PRIMARY KEY, value int);
+val data = sc.cassandraTable("test" , "kv")
+// Print some basic stats on the value field.
+data.map(row => row.getInt("value")).stats()
+
+//Saving to Cassandra in Scala
+val rdd = sc.parallelize(List(Seq("moremagic", 1)))
+rdd.saveToCassandra("test" , "kv", SomeColumns("key", "value"))
+
+//Scala example of reading from HBase
+import org.apache.hadoop.hbase.HBaseConfiguration
+import org.apache.hadoop.hbase.client.Result
+import org.apache.hadoop.hbase.io.ImmutableBytesWritable
+import org.apache.hadoop.hbase.mapreduce.TableInputFormat
+
+val conf = HBaseConfiguration.create()
+conf.set(TableInputFormat.INPUT_TABLE, "tablename")  // which table to scan
+
+val rdd = sc.newAPIHadoopRDD(
+  conf, classOf[TableInputFormat], classOf[ImmutableBytesWritable], classOf[Result])
+
+//Elasticsearch output in Scala
+val jobConf = new JobConf(sc.hadoopConfiguration)
+jobConf.set("mapred.output.format.class", "org.elasticsearch.hadoop.mr.EsOutputFormat")
+jobConf.setOutputCommitter(classOf[FileOutputCommitter])
+jobConf.set(ConfigurationOptions.ES_RESOURCE_WRITE, "twitter/tweets")
+jobConf.set(ConfigurationOptions.ES_NODES, "localhost")
+FileOutputFormat.setOutputPath(jobConf, new Path("-"))
+output.saveAsHadoopDataset(jobConf)
+
+
+// Elasticsearch input in Scala
+def mapWritableToInput(in: MapWritable): Map[String, String] = {
+  in.map{case (k, v) => (k.toString, v.toString)}.toMap
+}
+
+val jobConf = new JobConf(sc.hadoopConfiguration)
+jobConf.set(ConfigurationOptions.ES_RESOURCE_READ, args(1))
+jobConf.set(ConfigurationOptions.ES_NODES, args(2))
+val currentTweets = sc.hadoopRDD(jobConf,
+  classOf[EsInputFormat[Object, MapWritable]], classOf[Object],
+  classOf[MapWritable])
+// Extract only the map
+// Convert the MapWritable[Text, Text] to Map[String, String]
+val tweets = currentTweets.map{ case (key, value) => mapWritableToInput(value) }
+
+//Sample call log entry in JSON, with some fields removed
+{"address":"address here", "band":"40m","callsign":"KK6JLK","city":"SUNNYVALE",
+"contactlat":"37.384733","contactlong":"-122.032164",
+"county":"Santa Clara","dxcc":"291","fullname":"MATTHEW McPherrin",
+"id":57779,"mode":"FM","mylat":"37.751952821","mylong":"-122.4208688735",...}
+
+// Accumulator empty line count in Scala
+val sc = new SparkContext(...)
+val file = sc.textFile("file.txt")
+
+val blankLines = sc.accumulator(0)  // Create an Accumulator[Int] initialized to 0
+
+val callSigns = file.flatMap(line => {
+  if (line == "") {
+    blankLines += 1 // Add to the accumulator
+  }
+  line.split(" ")
+})
+
+callSigns.saveAsTextFile("output.txt")
+println("Blank lines: " + blankLines.value)
+
+//Country lookup with Broadcast values in Scala
+// Look up the countries for each call sign for the
+// contactCounts RDD.  We load an array of call sign
+// prefixes to country code to support this lookup.
+val signPrefixes = sc.broadcast(loadCallSignTable())
+val countryContactCounts = contactCounts.map{case (sign, count) =>
+  val country = lookupInArray(sign, signPrefixes.value)
+  (country, count)
+}.reduceByKey((x, y) => x + y)
+countryContactCounts.saveAsTextFile(outputDir + "/countries.txt")
+
+//Shared connection pool and JSON parser in Scala
+val contactsContactLists = validSigns.distinct().mapPartitions{
+  signs =>
+  val mapper = createMapper()
+  val client = new HttpClient()
+  client.start()
+  // create http request
+  signs.map {sign =>
+    createExchangeForSign(sign)
+ // fetch responses
+  }.map{ case (sign, exchange) =>
+      (sign, readExchangeCallLog(mapper, exchange))
+  }.filter(x => x._2 != null) // Remove empty CallLogs
+}
+
+
+--------------------------------------------------
+//BIT OF R CODING
+--------------------------------------------------
+R distance program
+#!/usr/bin/env Rscript
+library("Imap")
+f <- file("stdin")
+open(f)
+while(length(line <- readLines(f,n=1)) > 0) {
+  # process line
+  contents <- Map(as.numeric, strsplit(line, ","))
+  mydist <- gdist(contents[[1]][1], contents[[1]][2],
+                  contents[[1]][3], contents[[1]][4],
+                  units="m", a=6378137.0, b=6356752.3142, verbose = FALSE)
+  write(mydist, stdout())
+}
+//If that is written to an executable file named ./src/R/finddistance.R, then it looks like this in use:
+
+$ ./src/R/finddistance.R
+37.75889318222431,-122.42683635321838,37.7614213,-122.4240097
+349.2602
+coffee
+NA
+ctrl-d
+
+// Driver program using pipe() to call finddistance.R in Scala
+// Compute the distance of each call using an external R program
+// adds our script to a list of files for each node to download with this job
+val distScript = "./src/R/finddistance.R"
+val distScriptName = "finddistance.R"
+sc.addFile(distScript)
+val distances = contactsContactLists.values.flatMap(x => x.map(y =>
+  s"$y.contactlay,$y.contactlong,$y.mylat,$y.mylong")).pipe(Seq(
+    SparkFiles.get(distScriptName)))
+println(distances.collect().toList)
+
+/////Summary statistics available from StatsCounter
+Method	Meaning
+count()
+
+Number of elements in the RDD
+
+mean()
+
+Average of the elements
+
+sum()
+
+Total
+
+max()
+
+Maximum value
+
+min()
+
+Minimum value
+
+variance()
+
+Variance of the elements
+
+sampleVariance()
+
+Variance of the elements, computed for a sample
+
+stdev()
+
+Standard deviation
+
+sampleStdev()
+
+Sample standard deviation
+
+//Removing outliers in Scala
+// Now we can go ahead and remove outliers since those may have misreported locations
+// first we need to take our RDD of strings and turn it into doubles.
+val distanceDouble = distance.map(string => string.toDouble)
+val stats = distanceDoubles.stats()
+val stddev = stats.stdev
+val mean = stats.mean
+val reasonableDistances = distanceDoubles.filter(x => math.abs(x-mean) < 3 * stddev)
+println(reasonableDistance.collect().toList)
+
+
+//TIP
+Spark’s documentation consistently uses the terms driver and executor when describing the processes that execute each Spark application. The terms master and worker are used to describe the centralized and distributed portions of the cluster manager. It’s easy to confuse these terms, so pay close attention. For instance, Hadoop YARN runs a master daemon (called the Resource Manager) and several worker daemons called Node Managers. Spark can run both drivers and executors on the YARN worker nodes.
+
+//General format for spark-submit
+bin/spark-submit [options] <app jar | python file> [app options]
+
+[options] are a list of flags for spark-submit. You can enumerate all possible flags by running spark-submit --help. A list of common flags is enumerated in Table 7-2.
+
+<app jar | python file> refers to the JAR or Python script containing the entry point into your application.
+
+[app options] are options that will be passed onto your application. If the main() method of your program parses its calling arguments, it will see only [app options] and not the flags specific to spark-submit.
+
+//Using spark-submit with various options
+# Submitting a Java application to Standalone cluster mode
+$ ./bin/spark-submit \
+  --master spark://hostname:7077 \
+  --deploy-mode cluster \
+  --class com.databricks.examples.SparkExample \
+  --name "Example Program" \
+  --jars dep1.jar,dep2.jar,dep3.jar \
+  --total-executor-cores 300 \
+  --executor-memory 10g \
+  myApp.jar "options" "to your application" "go here"//import AssemblyKeys._
+
+
+
+//build.sbt file for a Spark application built with sbt 0.13
+import AssemblyKeys._
+
+name := "Simple Project"
+
+version := "1.0"
+
+organization := "com.databricks"
+
+scalaVersion := "2.10.3"
+
+libraryDependencies ++= Seq(
+    // Spark dependency
+    "org.apache.spark" % "spark-core_2.10" % "1.2.0" % "provided",
+    // Third-party libraries
+    "net.sf.jopt-simple" % "jopt-simple" % "4.3",
+    "joda-time" % "joda-time" % "2.0"
+)
+
+// This statement includes the assembly plug-in capabilities
+assemblySettings
+
+// Configure JAR used with the assembly plug-in
+jarName in assembly := "my-project-assembly.jar"
+
+// A special option to exclude Scala itself form our assembly JAR, since Spark
+// already bundles Scala.
+assemblyOption in assembly :=
+  (assemblyOption in assembly).value.copy(includeScala = false)
+
+
+//Packaging a Spark application built with sbt
+$ sbt assembly
+# In the target directory, we'll see an assembly JAR
+$ ls target/scala-2.10/
+my-project-assembly.jar
+# Listing the assembly JAR will reveal classes from dependency libraries
+$ jar tf target/scala-2.10/my-project-assembly.jar
+...
+joptsimple/HelpFormatter.class
+...
+org/joda/time/tz/UTCProvider.class
+...
+# An assembly JAR can be passed directly to spark-submit
+$ /path/to/spark/bin/spark-submit --master local ...
+  target/scala-2.10/my-project-assembly.jar
+
+//Creating an application using a SparkConf in Scala
+// Construct a conf
+val conf = new SparkConf()
+conf.set("spark.app.name", "My Spark App")
+conf.set("spark.master", "local[4]")
+conf.set("spark.ui.port", "36000") // Override the default port
+
+// Create a SparkContext with this configuration
+val sc = new SparkContext(conf)
+
+//Setting configuration values at runtime using flags
+$ bin/spark-submit \
+  --class com.example.MyApp \
+  --master local[4] \
+  --name "My Spark App" \
+  --conf spark.ui.port=36000 \
+  myApp.jar
+
+//Setting configuration values at runtime using a defaults file
+$ bin/spark-submit \
+  --class com.example.MyApp \
+  --properties-file my-config.conf \
+  myApp.jar
+
+## Contents of my-config.conf ##
+spark.master    local[4]
+spark.app.name  "My Spark App"
+spark.ui.port   36000
+
+
+//ANEXAMPLE
+
+Input.txt, the source file for our example
+## input.txt ##
+INFO This is a message with content
+INFO This is some other content
+(empty line)
+INFO Here are more messages
+WARN This is a warning
+(empty line)
+ERROR Something bad happened
+WARN More details on the bad thing
+INFO back to normal messages
+
+Processing text data in the Scala Spark shell
+// Read input file
+scala> val input = sc.textFile("input.txt")
+// Split into words and remove empty lines
+scala> val tokenized = input.
+     |   map(line => line.split(" ")).
+     | filter(words => words.size > 0)
+// Extract the first word from each line (the log level) and do a count
+scala> val counts = tokenized.
+     |   map(words => (words(0), 1)).
+     | reduceByKey{ (a, b) => a + b }
+
+//Visualizing RDDs with toDebugString() in Scala
+scala> input.toDebugString
+res85: String =
+(2) input.text MappedRDD[292] at textFile at <console>:13
+ |  input.text HadoopRDD[291] at textFile at <console>:13
+
+scala> counts.toDebugString
+res84: String =
+(2) ShuffledRDD[296] at reduceByKey at <console>:17
+ +-(2) MappedRDD[295] at map at <console>:17
+    |  FilteredRDD[294] at filter at <console>:15
+    |  MappedRDD[293] at map at <console>:15
+    |  input.text MappedRDD[292] at textFile at <console>:13
+    |  input.text HadoopRDD[291] at textFile at <console>:13
+
+// Collecting an RDD
+scala> counts.collect()
+res86: Array[(String, Int)] = Array((ERROR,1), (INFO,4), (WARN,2))
+
+//CLIENT MODE VS CLUSTER MODE
+Client mode
+Want to get a job result (dynamic analysis)
+Easier for developing/debugging
+Control where your Driver Program is running
+Always up application: expose your Spark job launcher as REST service or a Web UI
+Cluster mode
+Easier for resource allocation (let the master decide): Fire and forget
+Monitor your Driver Program from Master Web UI like other workers
+Stop at the end: one job is finished, allocated resources are freed
+
+//Coalescing a large RDD in the PySpark shell
+# Wildcard input that may match thousands of files
+>>> input = sc.textFile("s3n://log-files/2014/*.log")
+>>> input.getNumPartitions()
+35154
+# A filter that excludes almost all data
+>>> lines = input.filter(lambda line: line.startswith("2014-10-17"))
+>>> lines.getNumPartitions()
+35154
+# We coalesce the lines RDD before caching
+>>> lines = lines.coalesce(5).cache()
+>>> lines.getNumPartitions()
+4
+# Subsequent analysis can operate on the coalesced RDD...
+>>> lines.count()
+
+//Using the Kryo serializer and registering classes
+val conf = new SparkConf()
+conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+// Be strict about class registration
+conf.set("spark.kryo.registrationRequired", "true")
+conf.registerKryoClasses(Array(classOf[MyClass], classOf[MyOtherClass]))
+
+//Many JVMs support a special option to help debug this situation: "-Dsun.io.serialization.extended DebugInfo=true". You can enable this option this using the --driver-java-options and --executor-java-options flags to spark-submit.
+
+//Scala SQL imports
+// Import Spark SQL
+import org.apache.spark.sql.hive.HiveContext
+// Or if you can't have the hive dependencies
+import org.apache.spark.sql.SQLContext
+
+//Scala SQL implicits
+// Create a Spark SQL HiveContext
+val hiveCtx = ...
+// Import the implicit conversions
+import hiveCtx._
+
+// Hive load in Scala
+import org.apache.spark.sql.hive.HiveContext
+
+val hiveCtx = new HiveContext(sc)
+val rows = hiveCtx.sql("SELECT key, value FROM mytable")
+val keys = rows.map(row => row.getInt(0))
+
+////EXAMPLE
+
+input={"name": "Holden"}
+{"name":"Sparky The Bear", "lovesPandas":true, "knows":{"friends": ["holden"]}}
+
+//Creating a SchemaRDD from case class in Scala
+case class HappyPerson(handle: String, favouriteBeverage: String)
+...
+// Create a person and turn it into a Schema RDD
+val happyPeopleRDD = sc.parallelize(List(HappyPerson("holden", "coffee")))
+// Note: there is an implicit conversion
+// that is equivalent to sqlCtx.createSchemaRDD(happyPeopleRDD)
+happyPeopleRDD.registerTempTable("happy_people")
+
