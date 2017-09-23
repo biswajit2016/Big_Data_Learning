@@ -1,0 +1,551 @@
+// Initializing Spark in Python
+
+from pyspark import SparkConf, SparkContext
+
+conf = SparkConf().setMaster("local").setAppName("My App")
+sc = SparkContext(conf = conf)
+
+// parallelize() method in Python
+
+lines = sc.parallelize(["pandas", "i like pandas"])
+
+//filter() transformation in Python
+inputRDD = sc.textFile("log.txt")
+errorsRDD = inputRDD.filter(lambda x: "error" in x)
+
+//union() transformation in Python
+errorsRDD = inputRDD.filter(lambda x: "error" in x)
+warningsRDD = inputRDD.filter(lambda x: "warning" in x)
+badLinesRDD = errorsRDD.union(warningsRDD)
+
+//Python error count using actions
+print "Input had " + badLinesRDD.count() + " concerning lines"
+print "Here are 10 examples:"
+for line in badLinesRDD.take(10):
+    print line
+
+//Passing functions in Python
+word = rdd.filter(lambda s: "error" in s)
+
+/*SAME THING DONE*/
+def containsError(s):
+    return "error" in s
+word = rdd.filter(containsError)
+
+//Passing a function with field references (don’t do this!)
+class SearchFunctions(object):
+  def __init__(self, query):
+      self.query = query
+  def isMatch(self, s):
+      return self.query in s
+  def getMatchesFunctionReference(self, rdd):
+      # Problem: references all of "self" in "self.isMatch"
+      return rdd.filter(self.isMatch)
+  def getMatchesMemberReference(self, rdd):
+      # Problem: references all of "self" in "self.query"
+      return rdd.filter(lambda x: self.query in x)
+Instead, just extract the fields you need from your object into a local variable and pass that in, like we do in Example 3-20.
+
+//Example 3-20. Python function passing without field references
+class WordFunctions(object):
+  ...
+  def getMatchesNoReference(self, rdd):
+      # Safe: extract only the field we need into a local variable
+      query = self.query
+      return rdd.filter(lambda x: query in x)
+
+//Python squaring the values in an RDD
+nums = sc.parallelize([1, 2, 3, 4])
+squared = nums.map(lambda x: x * x).collect()
+for num in squared:
+    print "%i " % (num)
+
+//flatMap() in Python, splitting lines into words
+lines = sc.parallelize(["hello world", "hi"])
+words = lines.flatMap(lambda line: line.split(" "))
+words.first()  # returns "hello"
+
+//TIP
+Similar to reduce() is fold(), which also takes a function with the same signature as needed for reduce(), but in addition takes a “zero value” to be used for the initial call on each partition. The zero value you provide should be the identity element for your operation; that is, applying it multiple times with your function should not change the value (e.g., 0 for +, 1 for *, or an empty list for concatenation).
+
+//aggregate() in Python
+sumCount = nums.aggregate((0, 0),
+               (lambda acc, value: (acc[0] + value, acc[1] + 1),
+               (lambda acc1, acc2: (acc1[0] + acc2[0], acc1[1] + acc2[1]))))
+return sumCount[0] / float(sumCount[1])
+
+//TIP
+This chapter covers how to work with RDDs of key/value pairs, which are a common data type required for many operations in Spark. Key/value RDDs are commonly used to perform aggregations, and often we will do some initial ETL (extract, transform, and load) to get our data into a key/value format. Key/value RDDs expose new operations (e.g., counting up reviews for each product, grouping together data with the same key, and grouping together two different RDDs).
+
+//Creating a pair RDD using the first word as the key in Python
+pairs = lines.map(lambda x: (x.split(" ")[0], x))
+
+//Simple filter on second element in Python.   lines longer than 20 characters
+result = pairs.filter(lambda keyValue: len(keyValue[1]) < 20)
+
+//Per-key average with reduceByKey() and mapValues() in Python
+rdd.mapValues(lambda x: (x, 1)).reduceByKey(lambda x, y: (x[0] + y[0], x[1] + y[1]))
+
+// Word count in Python
+rdd = sc.textFile("s3://...")
+words = rdd.flatMap(lambda x: x.split(" "))
+result = words.map(lambda x: (x, 1)).reduceByKey(lambda x, y: x + y)
+
+//We can actually implement word count even faster by using the countByValue() function on the first RDD: 
+input.flatMap(x => x.split(" ")).countByValue().
+
+//TIP
+
+To understand combineByKey(), it’s useful to think of how it handles each element it processes. As combineByKey() goes through the elements in a partition, each element either has a key it hasn’t seen before or has the same key as a previous element.
+
+If it’s a new element, combineByKey() uses a function we provide, called createCombiner(), to create the initial value for the accumulator on that key. It’s important to note that this happens the first time a key is found in each partition, rather than only the first time the key is found in the RDD.
+
+If it is a value we have seen before while processing that partition, it will instead use the provided function, mergeValue(), with the current value for the accumulator for that key and the new value.
+
+Since each partition is processed independently, we can have multiple accumulators for the same key. When we are merging the results from each partition, if two or more partitions have an accumulator for the same key we merge the accumulators using the user-supplied mergeCombiners() function.
+
+//Per-key average using combineByKey() in Python
+sumCount =  nums.combineByKey(lambda x: (x,1),
+                              lambda x, y: (x[0] + y, x[1] + 1),
+                              lambda x, y: (x[0] + y[0], x[1] + y[1]))
+sumCount.map(lambda key, xy: (key, xy[0]/xy[1])).collectAsMap()
+
+// reduceByKey() with custom parallelism in Python
+data = [("a", 3), ("b", 4), ("a", 1)]
+sc.parallelize(data).reduceByKey(lambda x, y: x + y)      # Default parallelism
+sc.parallelize(data).reduceByKey(lambda x, y: x + y, 10)  # Custom parallelism
+
+//TIP
+Spark also has an optimized version of repartition() called coalesce() that allows avoiding data movement, but only if you are decreasing the number of RDD partitions. To know whether you can safely call coalesce(), you can check the size of the RDD using rdd.partitions.size() in Java/Scala and rdd.getNumPartitions() in Python and make sure that you are coalescing it to fewer partitions than it currently has.
+
+//TIP
+Sometimes we don’t need the key to be present in both RDDs to want it in our result. For example, if we were joining customer information with recommendations we might not want to drop customers if there were not any recommendations yet. leftOuterJoin(other) and rightOuterJoin(other) both join pair RDDs together by key, where one of the pair RDDs can be missing the key.
+
+//leftOuterJoin() and rightOuterJoin()
+storeAddress.leftOuterJoin(storeRating) ==
+{(Store("Ritual"),("1026 Valencia St",Some(4.9))),
+  (Store("Starbucks"),("Seattle",None)),
+  (Store("Philz"),("748 Van Ness Ave",Some(4.8))),
+  (Store("Philz"),("3101 24th St",Some(4.8)))}
+
+storeAddress.rightOuterJoin(storeRating) ==
+{(Store("Ritual"),(Some("1026 Valencia St"),4.9)),
+  (Store("Philz"),(Some("748 Van Ness Ave"),4.8)),
+  (Store("Philz"), (Some("3101 24th St"),4.8))}
+
+//Custom sort order in Python, sorting integers as if strings
+rdd.sortByKey(ascending=True, numPartitions=None, keyfunc = lambda x: str(x))
+
+//TIP
+Partitioning will not be helpful in all applications—for example, if a given RDD is scanned only once, there is no point in partitioning it in advance. It is useful only when a dataset is reused multiple times in key-oriented operations such as joins. We will give some examples shortly.
+
+//TIP ON PARTITIONING
+you might choose to hash-partition an RDD into 100 partitions so that keys that have the same hash value modulo 100 appear on the same node. Or you might range-partition the RDD into sorted ranges of keys so that elements with keys in the same range appear on the same node.
+
+//python simple application
+// Function called periodically to process a logfile of events in the past 5 minutes;
+// we assume that this is a SequenceFile containing (UserID, LinkInfo) pairs.
+def processNewLogs(logFileName: String) {
+  events = sc.sequenceFile[UserID, LinkInfo](logFileName)
+  joined = userData.join(events)// RDD of (UserID, (UserInfo, LinkInfo)) pairs
+  offTopicVisits = joined.filter {
+    case (userId, (userInfo, linkInfo)) : // Expand the tuple into its components
+      !userInfo.topics.contains(linkInfo.topic)
+  }.count()
+  println("Number of visits to non-subscribed topics: " + offTopicVisits)
+}
+
+
+//TIP
+sortByKey() and groupByKey() will result in range-partitioned and hash-partitioned RDDs, respectively. On the other hand, operations like map() cause the new RDD to forget the parent’s partitioning information, because such operations could theoretically modify the key of each record. The next few sections describe how to determine how an RDD is partitioned, and exactly how partitioning affects the various Spark operations.
+
+PARTITIONING IN JAVA AND PYTHON
+Spark’s Java and Python APIs benefit from partitioning in the same way as the Scala API. However, in Python, you cannot pass a HashPartitioner object to partitionBy; instead, you just pass the number of partitions desired (e.g., rdd.partitionBy(100)).
+
+Operations That Benefit from Partitioning
+Many of Spark’s operations involve shuffling data by key across the network. All of these will benefit from partitioning. As of Spark 1.0, the operations that benefit from partitioning are cogroup(), groupWith(), join(), leftOuterJoin(), rightOuterJoin(), groupByKey(), reduceByKey(), combineByKey(), and lookup().
+
+
+//TIP
+All that said, here are all the operations that result in a partitioner being set on the output RDD: cogroup(), groupWith(), join(), leftOuterJoin(), rightOuterJoin(), groupByKey(), reduceByKey(), combineByKey(), partitionBy(), sort(), mapValues() (if the parent RDD has a partitioner), flatMapValues() (if parent has a partitioner), and filter() (if parent has a partitioner). All other operations will produce a result with no partitioner.
+
+Finally, for binary operations, which partitioner is set on the output depends on the parent RDDs’ partitioners. By default, it is a hash partitioner, with the number of partitions set to the level of parallelism of the operation. However, if one of the parents has a partitioner set, it will be that partitioner; and if both parents have a partitioner set, it will be the partitioner of the first parent.
+
+//Python custom partitioner
+import urlparse
+
+def hash_domain(url):
+  return hash(urlparse.urlparse(url).netloc)
+
+rdd.partitionBy(20, hash_domain)   # Create 20 partitions
+
+// Loading a text file in Python
+input = sc.textFile("file:///home/holden/repos/spark/README.md")
+
+//Loading unstructured JSON in Python
+import json
+data = input.map(lambda x: json.loads(x))
+
+//Saving JSON in Python
+(data.filter(lambda x: x['lovesPandas']).map(lambda x: json.dumps(x))
+  .saveAsTextFile(outputFile))
+
+// Loading CSV with textFile() in Python
+import csv
+import StringIO
+...
+def loadRecord(line):
+    """Parse a CSV line"""
+    input = StringIO.StringIO(line)
+    reader = csv.DictReader(input, fieldnames=["name", "favouriteAnimal"])
+    return reader.next()
+input = sc.textFile(inputFile).map(loadRecord)
+
+//Loading CSV in full in Python
+def loadRecords(fileNameContents):
+    """Load all the records in a given file"""
+    input = StringIO.StringIO(fileNameContents[1])
+    reader = csv.DictReader(input, fieldnames=["name", "favoriteAnimal"])
+    return reader
+fullFileData = sc.wholeTextFiles(inputFile).flatMap(loadRecords)
+
+// Writing CSV in Python
+def writeRecords(records):
+    """Write out CSV lines"""
+    output = StringIO.StringIO()
+    writer = csv.DictWriter(output, fieldnames=["name", "favoriteAnimal"])
+    for record in records:
+        writer.writerow(record)
+    return [output.getvalue()]
+
+pandaLovers.mapPartitions(writeRecords).saveAsTextFile(outputFile)
+
+//Loading a SequenceFile in Python
+val data = sc.sequenceFile(inFile,
+  "org.apache.hadoop.io.Text", "org.apache.hadoop.io.IntWritable")
+
+//Creating a HiveContext and selecting data in Python
+from pyspark.sql import HiveContext
+
+hiveCtx = HiveContext(sc)
+rows = hiveCtx.sql("SELECT name, age FROM users")
+firstRow = rows.first()
+print firstRow.name
+
+//Sample tweets in JSON
+{"user": {"name": "Holden", "location": "San Francisco"}, "text": "Nice day out today"}
+{"user": {"name": "Matei", "location": "Berkeley"}, "text": "Even nicer here :)"}
+
+//JSON loading with Spark SQL in Python
+tweets = hiveCtx.jsonFile("tweets.json")
+tweets.registerTempTable("tweets")
+results = hiveCtx.sql("SELECT user.name, text FROM tweets")
+
+//Sample call log entry in JSON, with some fields removed
+{"address":"address here", "band":"40m","callsign":"KK6JLK","city":"SUNNYVALE",
+"contactlat":"37.384733","contactlong":"-122.032164",
+"county":"Santa Clara","dxcc":"291","fullname":"MATTHEW McPherrin",
+"id":57779,"mode":"FM","mylat":"37.751952821","mylong":"-122.4208688735",...}
+
+//Accumulator empty line count in Python
+file = sc.textFile(inputFile)
+# Create Accumulator[Int] initialized to 0
+blankLines = sc.accumulator(0)
+
+def extractCallSigns(line):
+    global blankLines   # Make the global variable accessible
+    if (line == ""):
+        blankLines += 1
+    return line.split(" ")
+
+callSigns = file.flatMap(extractCallSigns)
+callSigns.saveAsTextFile(outputDir + "/callsigns")
+print "Blank lines: %d" % blankLines.value
+
+
+//Accumulator error count in Python
+# Create Accumulators for validating call signs
+validSignCount = sc.accumulator(0)
+invalidSignCount = sc.accumulator(0)
+
+def validateSign(sign):
+    global validSignCount, invalidSignCount
+    if re.match(r"\A\d?[a-zA-Z]{1,2}\d{1,4}[a-zA-Z]{1,3}\Z", sign):
+        validSignCount += 1
+        return True
+    else:
+        invalidSignCount += 1
+        return False
+
+# Count the number of times we contacted each call sign
+validSigns = callSigns.filter(validateSign)
+contactCount = validSigns.map(lambda sign: (sign, 1)).reduceByKey(lambda (x, y): x + y)
+
+# Force evaluation so the counters are populated
+contactCount.count()
+if invalidSignCount.value < 0.1 * validSignCount.value:
+    contactCount.saveAsTextFile(outputDir + "/contactCount")
+else:
+    print "Too many errors: %d in %d" % (invalidSignCount.value, validSignCount.value)
+
+//Country lookup in Python
+# Look up the locations of the call signs on the
+# RDD contactCounts. We load a list of call sign
+# prefixes to country code to support this lookup.
+signPrefixes = loadCallSignTable()
+
+def processSignCount(sign_count, signPrefixes):
+    country = lookupCountry(sign_count[0], signPrefixes)
+    count = sign_count[1]
+    return (country, count)
+
+countryContactCounts = (contactCounts
+                       .map(processSignCount)
+                       .reduceByKey((lambda x, y: x+ y)))
+//BROADCAST VALUES
+Country lookup with Broadcast values in Python
+# Look up the locations of the call signs on the
+# RDD contactCounts. We load a list of call sign
+# prefixes to country code to support this lookup.
+
+signPrefixes = sc.broadcast(loadCallSignTable())
+
+def processSignCount(sign_count, signPrefixes):
+    country = lookupCountry(sign_count[0], signPrefixes.value)
+    count = sign_count[1]
+    return (country, count)
+
+countryContactCounts = (contactCounts
+                       .map(processSignCount)
+                       .reduceByKey((lambda x, y: x+ y)))
+
+countryContactCounts.saveAsTextFile(outputDir + "/countries.txt")
+
+//Shared connection pool in Python
+def processCallSigns(signs):
+    """Lookup call signs using a connection pool"""
+    # Create a connection pool
+    http = urllib3.PoolManager()
+    # the URL associated with each call sign record
+    urls = map(lambda x: "http://73s.com/qsos/%s.json" % x, signs)
+    # create the requests (non-blocking)
+    requests = map(lambda x: (x, http.request('GET', x)), urls)
+    # fetch the results
+    result = map(lambda x: (x[0], json.loads(x[1].data)), requests)
+    # remove any empty results and return
+    return filter(lambda x: x[1] is not None, result)
+
+def fetchCallSigns(input):
+    """Fetch call signs"""
+    return input.mapPartitions(lambda callSigns : processCallSigns(callSigns))
+
+contactsContactList = fetchCallSigns(validSigns)
+
+
+//Average without mapPartitions() in Python
+def combineCtrs(c1, c2):
+    return (c1[0] + c2[0], c1[1] + c2[1])
+
+def basicAvg(nums):
+    """Compute the average"""
+    nums.map(lambda num: (num, 1)).reduce(combineCtrs)
+
+//Example 6-14. Average with mapPartitions() in Python
+def partitionCtr(nums):
+    """Compute sumCounter for partition"""
+    sumCount = [0, 0]
+    for num in nums:
+        sumCount[0] += num
+        sumCount[1] += 1
+    return [sumCount]
+
+def fastAvg(nums):
+    """Compute the avg"""
+    sumCount = nums.mapPartitions(partitionCtr).reduce(combineCtrs)
+    return sumCount[0] / float(sumCount[1])
+
+
+//Driver program using pipe() to call finddistance.R in Python
+# Compute the distance of each call using an external R program
+distScript = "./src/R/finddistance.R"
+distScriptName = "finddistance.R"
+sc.addFile(distScript)
+def hasDistInfo(call):
+    """Verify that a call has the fields required to compute the distance"""
+    requiredFields = ["mylat", "mylong", "contactlat", "contactlong"]
+    return all(map(lambda f: call[f], requiredFields))
+def formatCall(call):
+    """Format a call so that it can be parsed by our R program"""
+    return "{0},{1},{2},{3}".format(
+        call["mylat"], call["mylong"],
+        call["contactlat"], call["contactlong"])
+
+pipeInputs = contactsContactList.values().flatMap(
+    lambda calls: map(formatCall, filter(hasDistInfo, calls)))
+distances = pipeInputs.pipe(SparkFiles.get(distScriptName))
+print distances.collect()
+
+//Removing outliers in Python
+# Convert our RDD of strings to numeric data so we can compute stats and
+# remove the outliers.
+distanceNumerics = distances.map(lambda string: float(string))
+stats = distanceNumerics.stats()
+stddev = std.stdev()
+mean = stats.mean()
+reasonableDistances = distanceNumerics.filter(
+  lambda x: math.fabs(x - mean) < 3 * stddev)
+print reasonableDistances.collect()
+
+//TIP
+Spark’s documentation consistently uses the terms driver and executor when describing the processes that execute each Spark application. The terms master and worker are used to describe the centralized and distributed portions of the cluster manager. It’s easy to confuse these terms, so pay close attention. For instance, Hadoop YARN runs a master daemon (called the Resource Manager) and several worker daemons called Node Managers. Spark can run both drivers and executors on the YARN worker nodes.
+
+//General format for spark-submit
+bin/spark-submit [options] <app jar | python file> [app options]
+
+[options] are a list of flags for spark-submit. You can enumerate all possible flags by running spark-submit --help. A list of common flags is enumerated in Table 7-2.
+
+<app jar | python file> refers to the JAR or Python script containing the entry point into your application.
+
+[app options] are options that will be passed onto your application. If the main() method of your program parses its calling arguments, it will see only [app options] and not the flags specific to spark-submit.
+
+Submitting a Python application in YARN client mode
+$ export HADOP_CONF_DIR=/opt/hadoop/conf
+$ ./bin/spark-submit \
+  --master yarn \
+  --py-files somelib-1.2.egg,otherlib-4.4.zip,other-file.py \
+  --deploy-mode client \
+  --name "Example Program" \
+  --queue exampleQueue \
+  --num-executors 40 \
+  --executor-memory 10g \
+  my_script.py "options" "to your application" "go here"
+
+//Creating an application using a SparkConf in Python
+# Construct a conf
+conf = new SparkConf()
+conf.set("spark.app.name", "My Spark App")
+conf.set("spark.master", "local[4]")
+conf.set("spark.ui.port", "36000") # Override the default port
+
+# Create a SparkContext with this configuration
+sc = SparkContext(conf)
+
+
+//Setting configuration values at runtime using flags
+$ bin/spark-submit \
+  --class com.example.MyApp \
+  --master local[4] \
+  --name "My Spark App" \
+  --conf spark.ui.port=36000 \
+  myApp.jar
+
+
+//Setting configuration values at runtime using a defaults file
+$ bin/spark-submit \
+  --class com.example.MyApp \
+  --properties-file my-config.conf \
+  myApp.jar
+
+## Contents of my-config.conf ##
+spark.master    local[4]
+spark.app.name  "My Spark App"
+spark.ui.port   36000
+
+
+//ANEXAMPLE
+
+Input.txt, the source file for our example
+## input.txt ##
+INFO This is a message with content
+INFO This is some other content
+(empty line)
+INFO Here are more messages
+WARN This is a warning
+(empty line)
+ERROR Something bad happened
+WARN More details on the bad thing
+INFO back to normal messages
+
+
+////CLIENT MODE VS CLUSTER MODE
+Client mode
+Want to get a job result (dynamic analysis)
+Easier for developing/debugging
+Control where your Driver Program is running
+Always up application: expose your Spark job launcher as REST service or a Web UI
+Cluster mode
+Easier for resource allocation (let the master decide): Fire and forget
+Monitor your Driver Program from Master Web UI like other workers
+Stop at the end: one job is finished, allocated resources are freed
+
+//Using the Kryo serializer and registering classes
+conf = new SparkConf()
+conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+// Be strict about class registration
+conf.set("spark.kryo.registrationRequired", "true")
+conf.registerKryoClasses(Array(classOf[MyClass], classOf[MyOtherClass]))
+
+//Many JVMs support a special option to help debug this situation: "-Dsun.io.serialization.extended DebugInfo=true". You can enable this option this using the --driver-java-options and --executor-java-options flags to spark-submit.
+
+//Python SQL imports
+# Import Spark SQL
+from pyspark.sql import HiveContext, Row
+# Or if you can't include the hive requirements
+from pyspark.sql import SQLContext, Row
+
+hiveCtx = HiveContext(sc)
+
+
+// Loading and quering tweets in Python
+input = hiveCtx.jsonFile(inputFile)
+# Register the input schema RDD
+input.registerTempTable("tweets")
+# Select tweets based on the retweetCount
+topTweets = hiveCtx.sql("""SELECT text, retweetCount  FROM
+  tweets ORDER BY retweetCount LIMIT 10""")
+
+//Accessing the text column in the topTweets SchemaRDD in Python
+topTweetText = topTweets.map(lambda row: row.text)
+
+//Hive load in Python
+from pyspark.sql import HiveContext
+
+hiveCtx = HiveContext(sc)
+rows = hiveCtx.sql("SELECT key, value FROM mytable")
+keys = rows.map(lambda row: row[0])
+
+//Parquet load in Python
+# Load some data in from a Parquet file with field's name and favouriteAnimal
+rows = hiveCtx.parquetFile(parquetFile)
+names = rows.map(lambda row: row.name)
+print "Everyone"
+print names.collect()
+
+//Parquet query in Python
+# Find the panda lovers
+tbl = rows.registerTempTable("people")
+pandaFriends = hiveCtx.sql("SELECT name FROM people WHERE favouriteAnimal = \"panda\"")
+print "Panda friends"
+print pandaFriends.map(lambda row: row.name).collect()
+
+//Parquet file save in Python
+pandaFriends.saveAsParquetFile("hdfs://...")
+
+//EXAMPLE
+
+input={"name": "Holden"}
+{"name":"Sparky The Bear", "lovesPandas":true, "knows":{"friends": ["holden"]}}
+
+//Loading JSON with Spark SQL in Python
+input = hiveCtx.jsonFile(inputFile)
+
+//Loading JSON with Spark SQL in Scala
+val input = hiveCtx.jsonFile(inputFile)
+
+//Creating a SchemaRDD using Row and named tuple in Python
+happyPeopleRDD = sc.parallelize([Row(name="holden", favouriteBeverage="coffee")])
+happyPeopleSchemaRDD = hiveCtx.inferSchema(happyPeopleRDD)
+happyPeopleSchemaRDD.registerTempTable("happy_people")
+
+
+	
